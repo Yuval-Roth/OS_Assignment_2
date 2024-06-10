@@ -187,3 +187,10 @@ void            virtio_disk_intr(void);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))
+
+//channels
+void            init_channels(void);
+int             channel_create(void);
+int             channel_put(int, int);
+int             channel_take(int, int*);
+int             channel_destroy(int);
