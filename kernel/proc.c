@@ -10,6 +10,8 @@ struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
 
+struct channel channels[NPROC];
+
 struct proc *initproc;
 
 int nextpid = 1;
@@ -17,6 +19,7 @@ struct spinlock pid_lock;
 
 extern void forkret(void);
 static void freeproc(struct proc *p);
+void deleteChannels(int pid);
 
 extern char trampoline[]; // trampoline.S
 
@@ -380,6 +383,9 @@ exit(int status)
 
   release(&wait_lock);
 
+  // delete the channels created by this process
+  deleteChannels(p->pid);
+
   // Jump into the scheduler, never to return.
   sched();
   panic("zombie exit");
@@ -596,6 +602,7 @@ kill(int pid)
         p->state = RUNNABLE;
       }
       release(&p->lock);
+      deleteChannels(pid);
       return 0;
     }
     release(&p->lock);
@@ -679,5 +686,120 @@ procdump(void)
       state = "???";
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
+  }
+}
+
+void init_channels(void){
+  for(int i = 0; i < NPROC; i++){
+    initlock(&channels[i].lock, "channel "+i);
+    channels[i].in_use = 0;
+    channels[i].full = 0;
+    channels[i].data = 0;
+    channels[i].creator_pid = 0;
+  }
+}
+
+int channel_create(void){
+  for(int i = 0; i < NPROC; i++){
+    if(channels[i].in_use == 0){
+      channels[i].in_use = 1;
+      channels[i].full = 0;
+      channels[i].data = 0;
+      channels[i].creator_pid = myproc()->pid;
+      initlock(&channels[i].lock, "channel "+i);
+      return i;
+    }
+  }
+  return -1;
+}
+
+int channel_put(int cd, int data){
+  struct channel *ch = &channels[cd];
+  acquire(&ch->lock);
+  
+  if(ch->in_use == 0){
+    release(&ch->lock);
+    return -1;
+  }
+
+  while(ch->full){
+    // put process to sleep
+    sleep(&ch->chan, &ch->lock);
+
+    if(ch->in_use == 0){
+      release(&ch->lock);
+      wakeup(&ch->chan);
+      return -1;
+    }
+  }
+
+  ch->data = data;
+  ch->full = 1;
+  release(&ch->lock);
+  wakeup(&ch->chan);
+
+  return 0;
+}
+
+int channel_take(int cd, int *data){
+
+
+  struct proc *p = myproc();
+  struct channel *ch = &channels[cd];
+  acquire(&ch->lock);
+
+  if(ch->in_use == 0){
+    release(&ch->lock);
+    return -1;
+  }
+  
+  while(!ch->full){
+    // put process to sleep
+    sleep(&ch->chan, &ch->lock);
+
+    if(ch->in_use == 0){
+        release(&ch->lock);
+        return -1;
+    }
+
+  }
+  // check if data pointer is inv
+  if(data == 0){
+    release(&ch->lock);
+    wakeup(&ch->chan);
+    return -1;
+  }
+
+  copyout(p->pagetable, (uint64)data, (char *)&ch->data, sizeof(ch->data));
+  ch->full = 0;
+  release(&ch->lock);
+  wakeup(&ch->chan);
+  return 0;
+}
+
+int channel_destroy(int cd){
+  struct channel *ch = &channels[cd];
+  acquire(&ch->lock);
+
+  if(ch->in_use == 0){
+    release(&ch->lock);
+    return -1;
+  }
+
+  ch->in_use = 0;
+  ch->full = 0;
+  ch->data = 0;
+  ch->creator_pid = 0;
+  release(&ch->lock);
+  wakeup(&ch->chan);
+
+  return 0;
+}
+
+void deleteChannels(int pid){
+  for(int i = 0; i < NPROC; i++){
+    if(channels[i].creator_pid == pid){
+      channel_destroy(i);
+    }
   }
 }
