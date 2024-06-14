@@ -701,14 +701,16 @@ void init_channels(void){
 
 int channel_create(void){
   for(int i = 0; i < NPROC; i++){
+    acquire(&channels[i].lock);
     if(channels[i].in_use == 0){
       channels[i].in_use = 1;
       channels[i].full = 0;
       channels[i].data = 0;
       channels[i].creator_pid = myproc()->pid;
-      initlock(&channels[i].lock, "channel "+i);
+      release(&channels[i].lock);
       return i;
     }
+    release(&channels[i].lock);
   }
   return -1;
 }
